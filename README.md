@@ -26,7 +26,10 @@
     - Finish the project report
 
   1, Submit outline of main ideas (due next week) (Jul, Flav)
+  
   2, Reach out to the TA (Flav)
+  
   3, Read the paper, brainstorm points of improvement (Jack, Soph, Jul, Flav)
+  
   4, Run the existing code in online repo (Jack, Jul)
   
