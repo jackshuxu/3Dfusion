@@ -307,7 +307,7 @@ class Dense(tf.keras.layers.Layer):
         super(Dense, self).__init__()
 
         # Define a fully connected (dense) layer
-        self.dense = tf.keras.layers.Dense(output_dim, input_shape=(input_dim,))
+        self.dense = tf.keras.layers.Dense(output_dim, input_shape=(input_dim,), trainable=True)
 
     def call(self, x):
         """
@@ -323,7 +323,9 @@ class Dense(tf.keras.layers.Layer):
         x = self.dense(x)
 
         # Reshape the output to a 4D tensor, adding singleton dimensions for height and width
-        return tf.expand_dims(x, axis=1)
+        return tf.expand_dims(tf.expand_dims(x, axis=1), axis=1)
+        # return tf.reshape(x, [-1, self.dense.units, 1, 1])
+
 
 class UNet(tf.keras.Model):
     def __init__(self, marginal_prob_std, channels=[32, 64, 128, 256], embed_dim=256):
@@ -334,30 +336,29 @@ class UNet(tf.keras.Model):
         ])
         self.conv1 = tf.keras.layers.Conv2D(channels[0], 3, strides=1, padding='same', use_bias=False)
         self.dense1 = Dense(embed_dim, channels[0])
-        self.gnorm1 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
-
+        self.gnorm1 = tf.keras.layers.GroupNormalization(groups=4,epsilon=1e-5)
         self.conv2 = tf.keras.layers.Conv2D(channels[1], 3, strides=4, padding='same', use_bias=False)
         self.dense2 = Dense(embed_dim, channels[1])
-        self.gnorm2 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.gnorm2 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
 
         self.conv3 = tf.keras.layers.Conv2D(channels[2], 3, strides=1, padding='same', use_bias=False)
         self.dense3 = Dense(embed_dim, channels[2])
-        self.gnorm3 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.gnorm3 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
 
         self.conv4 = tf.keras.layers.Conv2D(channels[3], 3, strides=1, padding='same', use_bias=False)
         self.dense4 = Dense(embed_dim, channels[3])
-        self.gnorm4 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.gnorm4 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
 
         # Decoding layers where the resolution increases
         self.tconv4 = tf.keras.layers.Conv2DTranspose(channels[2], 3, strides=1, padding='same', use_bias=False)
         self.dense5 = Dense(embed_dim, channels[2])
-        self.tgnorm4 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.tgnorm4 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
         self.tconv3 = tf.keras.layers.Conv2DTranspose(channels[1], 3, strides=1, padding='same', use_bias=False)
         self.dense6 = Dense(embed_dim, channels[1])
-        self.tgnorm3 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.tgnorm3 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
         self.tconv2 = tf.keras.layers.Conv2DTranspose(channels[0], 3, strides=4, padding='same', use_bias=False)
         self.dense7 = Dense(embed_dim, channels[0])
-        self.tgnorm2 = tf.keras.layers.LayerNormalization(axis=-1, center=True, scale=True)
+        self.tgnorm2 = tf.keras.layers.GroupNormalization(groups=32,epsilon=1e-5)
         self.tconv1 = tf.keras.layers.Conv2DTranspose(1, 3, strides=1, padding='same',use_bias = False)
 
         # The swish activation function
@@ -402,7 +403,6 @@ class UNet(tf.keras.Model):
         # Normalize output
         h = h / tf.expand_dims(tf.expand_dims(tf.expand_dims(self.marginal_prob_std(t), axis=-1), axis=-1),axis = -1)
         return h
-    
 class UNetRes(tf.keras.Model):
     def __init__(self, marginal_prob_std, channels=[32, 64, 128, 256], embed_dim=256):
         super(UNetRes, self).__init__()
@@ -470,6 +470,7 @@ class UNetRes(tf.keras.Model):
         # Normalize output
         h = h / tf.expand_dims(tf.expand_dims(tf.expand_dims(self.marginal_prob_std(t), axis=-1), axis=-1),axis = -1)
         return h
+
 # Set the GPU as the device if available
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -513,19 +514,6 @@ if gpus:
         # Memory growth must be set at program startup
         print(f'Error: {e}')
 
-def diffusion_coeff(t, sigma):
-    """
-    Compute the diffusion coefficient of our SDE.
-
-    Parameters:
-    - t: A vector of time steps.
-    - sigma: The $\sigma$ in our SDE.
-
-    Returns:
-    - The vector of diffusion coefficients as a TensorFlow tensor.
-    """
-    t = tf.convert_to_tensor(t, dtype=tf.float32)  # Ensure input is a tensor
-    return tf.pow(sigma, t)  # Compute sigma to the power of t for the diffusion coefficients
 # Define the functions as previously described
 def marginal_prob_std(t, sigma):
     """
@@ -561,9 +549,11 @@ sigma =  25.0
 # Partial functions setup with sigma value
 marginal_prob_std_fn = functools.partial(marginal_prob_std, sigma=sigma)
 diffusion_coeff_fn = functools.partial(diffusion_coeff, sigma=sigma)
+
 def loss_fn(model, x, marginal_prob_std, eps=1e-5):
     """
-    The loss function for training score-based generative models in TensorFlow.
+    The loss function for training score-based generative models in TensorFlow,
+    revised to match the PyTorch version more closely.
 
     Parameters:
     - model: A TensorFlow model instance that represents a time-dependent score-based model.
@@ -572,7 +562,8 @@ def loss_fn(model, x, marginal_prob_std, eps=1e-5):
     - eps: A tolerance value for numerical stability.
     """
     # Sample time uniformly in the range (eps, 1-eps)
-    random_t = tf.random.uniform((tf.shape(x)[0],1), minval=eps, maxval=1-eps)
+    random_t = tf.random.uniform((tf.shape(x)[0],), minval=eps, maxval=1-eps)
+
     # Find the noise std at the sampled time `t`
     std = marginal_prob_std(random_t)
 
@@ -580,7 +571,7 @@ def loss_fn(model, x, marginal_prob_std, eps=1e-5):
     z = tf.random.normal(tf.shape(x))
 
     # Perturb the input data with the generated noise
-    perturbed_x = x + z * tf.reshape(std, (-1, 1, 1, 1))
+    perturbed_x = x + z * tf.reshape(std, (-1, 1, 1, 1))  # Explicit reshaping for broadcasting
 
     # Get the score from the model using the perturbed data and time
     score = model(perturbed_x, random_t)
@@ -646,19 +637,18 @@ score_model = UNet(marginal_prob_std=marginal_prob_std_fn)  # Adjusted to your m
 score_model.compile(optimizer=Adam(learning_rate=1e-3))  # Adjusted learning rate
 
 n_epochs = 15
-batch_size = 128
+batch_size = 512
 lr = 5e-4 #9.8e-04
 
 # Load the MNIST dataset for training
 (x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
-x_train = x_train.astype('float32') / 255
-x_train = np.expand_dims(x_train, -1)  # Adjust for TensorFlow's default channel-last data format
-
+# x_train = x_train.astype('float32') / 255
+# x_train = np.expand_dims(x_train, -1)  # Adjust for TensorFlow's default channel-last data format
+x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.0
 train_dataset = tf.data.Dataset.from_tensor_slices((x_train, x_train))  # Dummy y_train as x_train just for batching purposes
 train_dataset = train_dataset.shuffle(60000).batch(batch_size)
 
 # Initialize the Adam optimizer with the specified learning rate
-optimizer = Adam(learning_rate=lr)
 
 # Learning rate scheduler to adjust the learning rate during training
 def lr_schedule(epoch,lr,total_epochs):
@@ -680,26 +670,27 @@ def lr_schedule(epoch,lr,total_epochs):
 
 # Training loop over epochs
 for epoch in range(n_epochs):
-    avg_loss = 0
-    num_items = 0
+    total_loss = 0
+    num_iter = 0
     for x, y in train_dataset:
         with tf.GradientTape() as tape:
             # Forward pass
             loss = loss_fn(score_model, x, marginal_prob_std_fn)
+            # print(loss)
         # Compute gradients
         gradients = tape.gradient(loss, score_model.trainable_variables)
         # Update weights
-        optimizer.apply_gradients(zip(gradients, score_model.trainable_variables))
+        score_model.optimizer.apply_gradients(zip(gradients, score_model.trainable_variables))
         # Update average loss
-        avg_loss += loss
-        num_items += x.shape[0]
+        total_loss +=loss * x.shape[0]
+        num_iter += x.shape[0]
 
     # Adjust the learning rate
-    lr_current = lr_schedule(epoch,lr,n_epochs)
-    optimizer.learning_rate = lr_current
+    # lr_current = lr_schedule(epoch,lr,n_epochs)
+    # score_model.optimizer.learning_rate = lr_current
 
     # Print average loss and learning rate for the current epoch
-    print('Epoch {} / {}: Average Loss: {:.5f} lr {:.1e}'.format(epoch+1, n_epochs, avg_loss / num_items,lr_current))
+    print('Epoch {} / {}: Average Loss: {:.5f} '.format(epoch+1, n_epochs, total_loss / num_iter))
 
     # Save the model checkpoint after each epoch of training
     score_model.save_weights('ckpt_res.h5')
@@ -735,9 +726,10 @@ import matplotlib.pyplot as plt
 for i in range(sample_batch_size):
     plt.subplot(8, 8, i + 1)
     subplot= tf.keras.preprocessing.image.array_to_img(samples[i], data_format='channels_last')
-    #plt.imshow(subplot, cmap='gray')  # Assuming grayscale images, change the cmap if needed
     plt.axis('off')
-    plt.savefig("concat_result")
+    plt.imsave(f'image_{i}.png', subplot)
+
+
 # Load the pre-trained checkpoint from disk.
 # Assuming the model weights are saved in a TensorFlow checkpoint format
 ckpt_path = 'ckpt_res.h5'
@@ -768,6 +760,6 @@ import matplotlib.pyplot as plt
 for i in range(sample_batch_size):
     plt.subplot(8, 8, i + 1)
     subplot= tf.keras.preprocessing.image.array_to_img(samples[i], data_format='channels_last')
-    #plt.imshow(subplot, cmap='gray')  # Assuming grayscale images, change the cmap if needed
+    plt.imshow(subplot, cmap='gray')  # Assuming grayscale images, change the cmap if needed
     plt.axis('off')
-    plt.savefig("concat_result")
+plt.savefig(f'result.png', cmap='gray')
