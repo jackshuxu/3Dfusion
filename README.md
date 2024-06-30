@@ -14,7 +14,7 @@ Our architecture comprises a Variational Autoencoder, a UNet, and a pretrained C
 
 We trained and tested our model on the Fashion MNIST dataset. Our model achieved an average loss across batches of 36.631 (on 15 batches), while the PyTorch paper we reimplemented achieved an average loss across batches of 41.481, so we managed to improve the given model. While blurry, the generated images still depict identifiable clothing items on the Fashion MNIST dataset.
 
-![Our output of stable diffusion](figure1.png)
+<img width="844" alt="Screenshot 2024-06-30 at 12 13 57 AM" src="https://github.com/julia-fu0528/3Dfusion/assets/110797555/102dbf34-7281-4e35-8545-6c0967581b29">
 
 Future improvements could include tuning the hyperparameters of the model or adding more layers. Our end goal was to create a 3D printable model, which is challenging given the computational power we had and the specific constraints of the architecture of a 3D printable model.
 
